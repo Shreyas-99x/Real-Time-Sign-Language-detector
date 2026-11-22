@@ -1,9 +1,9 @@
 /**
- * SignSpeak - Core Application Logic (Optimized v3 Zero-GC & High Responsiveness)
- * ==============================================================================
+ * SignSpeak - Core Application Logic (v4 Turbo Speed & Practice Engine)
+ * ====================================================================
  * Real-time sign language recognition, sentence building, predictive autocomplete,
  * live FPS monitoring, ghost hand alignment guide, top-3 predictions,
- * and high-contrast accessible sentence builder.
+ * live 5-finger telemetry HUD, adaptive Turbo/Normal speed modes, and ASL Practice Trainer.
  */
 
 (() => {
@@ -11,10 +11,10 @@
 
   // --- Configuration & Constants ---
   const CONFIG = {
-    CONFIDENCE_THRESHOLD: 0.60, // Minimum confidence to accept a prediction
-    HOLD_DURATION_MS: 550,      // Crisp dwell time: holding for 0.55s is quick, natural, and reliable
-    COOLDOWN_MS: 380,           // Fast cooldown recovery: safe against repeat captures via latch
-    SMOOTHING_BUFFER_SIZE: 4,   // Frame history for majority vote smoothing (~65ms latency)
+    CONFIDENCE_THRESHOLD: 0.50, // Minimum confidence (per-letter adaptive thresholds in classifier)
+    get HOLD_DURATION_MS() { return state.speedMode === 'turbo' ? 380 : 540; },
+    get COOLDOWN_MS() { return state.speedMode === 'turbo' ? 240 : 380; },
+    get SMOOTHING_BUFFER_SIZE() { return state.speedMode === 'turbo' ? 3 : 4; },
     MODEL_DIR: 'model',
     MAX_HISTORY_ITEMS: 8
   };
@@ -28,10 +28,14 @@
     currentCandidate: null,     // Currently held candidate label
     candidateStartTime: null,   // Timestamp candidate was first observed
     cooldownUntil: 0,           // Timestamp until which detection is paused
-    latchedLetter: null,        // Letter that was committed and requires gesture release/change
+    latchedLetter: null,        // Letter committed and requires gesture release/change
     hasActiveLatch: false,      // Latch flag preventing continuous repeated commits
     theme: localStorage.getItem('signspeak-theme') || 'dark',
     soundEnabled: localStorage.getItem('signspeak-sound') !== 'false',
+    speedMode: localStorage.getItem('signspeak-speed') || 'turbo',
+    practiceMode: false,
+    practiceTarget: 'A',
+    practiceStreak: 0,
     audioContext: null,
     historyTrail: [],
     // FPS tracking
@@ -64,6 +68,20 @@
     statusBadge: document.getElementById('detection-status-badge'),
     top3Items: document.getElementById('top3-items'),
 
+    // Finger Telemetry HUD
+    fingerThumb: document.getElementById('finger-thumb'),
+    fingerIndex: document.getElementById('finger-index'),
+    fingerMiddle: document.getElementById('finger-middle'),
+    fingerRing: document.getElementById('finger-ring'),
+    fingerPinky: document.getElementById('finger-pinky'),
+
+    // Practice Mode
+    practiceModeBtn: document.getElementById('practice-mode-btn'),
+    practiceBanner: document.getElementById('practice-banner'),
+    practiceTargetGlyph: document.getElementById('practice-target-glyph'),
+    practiceStreakBadge: document.getElementById('practice-streak-badge'),
+    practiceSkipBtn: document.getElementById('practice-skip-btn'),
+
     // Sentence Builder & Controls
     sentenceBox: document.getElementById('sentence-box'),
     wordSuggestionsContainer: document.getElementById('word-suggestions'),
@@ -77,6 +95,7 @@
     toastContainer: document.getElementById('toast-container'),
 
     // Settings
+    speedToggleBtn: document.getElementById('speed-toggle-btn'),
     themeToggleBtn: document.getElementById('theme-toggle-btn'),
     soundToggleBtn: document.getElementById('sound-toggle-btn'),
 
@@ -151,10 +170,9 @@
       osc.start(now);
       osc.stop(now + 0.15);
     } catch (e) {
-      // Audio autoplay policy fallback
+      // Audio autoplay fallback
     }
 
-    // Trigger haptic vibration on mobile
     if ('vibrate' in navigator) {
       try { navigator.vibrate(40); } catch (_) {}
     }
@@ -188,6 +206,21 @@
     };
   }
 
+  // --- Finger Telemetry UI Render ---
+  function renderFingerTelemetry(telemetry) {
+    if (!telemetry || !DOM.fingerThumb) return;
+    const updateChip = (el, icon, name, status) => {
+      if (!el) return;
+      el.className = `finger-chip ${status || 'curl'}`;
+      el.textContent = `${icon} ${name}: ${status || '—'}`;
+    };
+    updateChip(DOM.fingerThumb, '👍', 'Thumb', telemetry.thumb);
+    updateChip(DOM.fingerIndex, '☝️', 'Index', telemetry.index);
+    updateChip(DOM.fingerMiddle, '🖐️', 'Mid', telemetry.middle);
+    updateChip(DOM.fingerRing, '💍', 'Ring', telemetry.ring);
+    updateChip(DOM.fingerPinky, '🤙', 'Pinky', telemetry.pinky);
+  }
+
   // --- History Trail ---
   function addHistoryItem(letter) {
     state.historyTrail.push(letter);
@@ -216,7 +249,6 @@
     DOM.sentenceBox.scrollTop = DOM.sentenceBox.scrollHeight;
     updateSuggestions();
 
-    // Visual flash
     DOM.sentenceBox.classList.add('flash-commit');
     setTimeout(() => DOM.sentenceBox.classList.remove('flash-commit'), 200);
   }
@@ -334,11 +366,53 @@
     showToast(`Inserted: "${word}"`);
   }
 
+  // --- Practice / Trainer Mode ---
+  function togglePracticeMode() {
+    state.practiceMode = !state.practiceMode;
+    if (state.practiceMode) {
+      DOM.practiceBanner.classList.remove('hidden');
+      DOM.practiceModeBtn.classList.add('btn-primary');
+      nextPracticeTarget();
+      showToast('🎯 Practice Mode Started! Match the target sign.');
+    } else {
+      DOM.practiceBanner.classList.add('hidden');
+      DOM.practiceModeBtn.classList.remove('btn-primary');
+      showToast('Practice Mode Exited.');
+    }
+  }
+
+  function nextPracticeTarget() {
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    let next = state.practiceTarget;
+    while (next === state.practiceTarget) {
+      next = letters[Math.floor(Math.random() * letters.length)];
+    }
+    state.practiceTarget = next;
+    if (DOM.practiceTargetGlyph) {
+      DOM.practiceTargetGlyph.textContent = next;
+    }
+  }
+
   // --- Stable Letter Commitment ---
   function commitLetter(label) {
     console.log(`Accepted alphabet: [${label}]`);
     playCommitChime(1.0);
     addHistoryItem(label);
+
+    // Practice mode match check
+    if (state.practiceMode) {
+      if (label.toUpperCase() === state.practiceTarget) {
+        state.practiceStreak++;
+        if (DOM.practiceStreakBadge) {
+          DOM.practiceStreakBadge.textContent = `🔥 Streak: ${state.practiceStreak}`;
+        }
+        playCommitChime(1.5);
+        showToast(`🎉 Correct! Signed '${label}'`);
+        nextPracticeTarget();
+      } else {
+        showToast(`Signed '${label}'. Target is '${state.practiceTarget}'`);
+      }
+    }
 
     const lower = label.toLowerCase();
     if (lower === 'space') {
@@ -380,7 +454,6 @@
     ctx.save();
     ctx.clearRect(0, 0, width, height);
 
-    // 1. Single-stroke skeleton batch
     ctx.lineWidth = 3;
     ctx.strokeStyle = isDimmed ? 'rgba(156, 163, 175, 0.4)' : '#06b6d4';
     ctx.lineCap = 'round';
@@ -396,7 +469,6 @@
     }
     ctx.stroke();
 
-    // 2. Batched landmark joints by category (zero context-switch overhead)
     if (isDimmed) {
       ctx.beginPath();
       for (let i = 0; i < 21; i++) {
@@ -526,7 +598,7 @@
       state.predictionBuffer = [];
       state.currentCandidate = null;
       state.candidateStartTime = null;
-      state.hasActiveLatch = false; // Release commit latch when hand leaves frame
+      state.hasActiveLatch = false;
       state.latchedLetter = null;
       state.classifier.resetSmoothing();
       setProgress(0);
@@ -536,6 +608,7 @@
       DOM.statusBadge.textContent = 'Ready';
       DOM.statusBadge.className = 'status-badge ready';
       renderTop3([]);
+      renderFingerTelemetry({ thumb: '—', index: '—', middle: '—', ring: '—', pinky: '—' });
       return;
     }
 
@@ -547,13 +620,14 @@
     // Predict with classifier
     const prediction = state.classifier.predict(landmarks);
     renderTop3(prediction.top3);
+    renderFingerTelemetry(prediction.telemetry);
 
     // If prediction is low confidence or invalid, reset candidate & show prompt
     if (prediction.isLowConfidence || prediction.label === '—' || !prediction.label) {
       state.predictionBuffer = [];
       state.currentCandidate = null;
       state.candidateStartTime = null;
-      state.hasActiveLatch = false; // Release commit latch when hand relaxes or drops sign
+      state.hasActiveLatch = false;
       state.latchedLetter = null;
       setProgress(0);
       DOM.detectedLetter.textContent = '—';
@@ -580,7 +654,6 @@
     DOM.detectedLetter.textContent = smoothed.label;
     DOM.detectedConfidence.textContent = `${confPercent}% confidence`;
 
-    // Dynamic color coding
     if (confPercent >= 75) {
       DOM.detectedConfidence.className = 'meta-confidence conf-high';
     } else if (confPercent >= 50) {
@@ -590,8 +663,6 @@
     }
 
     // --- REPEAT COMMIT PREVENTION (LATCH PROTOCOL) ---
-    // If a letter was recently captured and the user is still holding that exact same sign,
-    // prevent re-capturing it until the user either changes signs or relaxes their hand!
     if (state.hasActiveLatch) {
       if (smoothed.label === state.latchedLetter) {
         state.currentCandidate = null;
@@ -602,7 +673,6 @@
         DOM.detectedConfidence.textContent = `${confPercent}% • Captured`;
         return;
       } else {
-        // User changed to a different letter! Release latch and allow candidate evaluation
         state.hasActiveLatch = false;
         state.latchedLetter = null;
       }
@@ -673,8 +743,8 @@
       hands.setOptions({
         maxNumHands: 1,
         modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minDetectionConfidence: 0.45,
+        minTrackingConfidence: 0.45
       });
 
       hands.onResults(onResults);
@@ -766,7 +836,15 @@
     letters.forEach(char => DOM.aslGrid.appendChild(createCard(char, 'Letter')));
   }
 
-  // --- Sound Setting Management ---
+  // --- Settings & UI Updaters ---
+  function updateSpeedUI() {
+    if (DOM.speedToggleBtn) {
+      const isTurbo = state.speedMode === 'turbo';
+      DOM.speedToggleBtn.textContent = isTurbo ? '⚡ Turbo' : '🐢 Normal';
+      DOM.speedToggleBtn.setAttribute('aria-label', `Switch speed mode (current: ${state.speedMode})`);
+    }
+  }
+
   function updateSoundUI() {
     if (DOM.soundToggleBtn) {
       DOM.soundToggleBtn.textContent = state.soundEnabled ? '🔊 Sound' : '🔇 Muted';
@@ -774,7 +852,6 @@
     }
   }
 
-  // --- Theme Management ---
   function applyTheme(theme) {
     state.theme = theme;
     document.documentElement.setAttribute('data-theme', theme);
@@ -810,6 +887,7 @@
   async function init() {
     applyTheme(state.theme);
     updateSoundUI();
+    updateSpeedUI();
     initProgressRing();
     initKeyboard();
     updateSuggestions();
@@ -831,6 +909,27 @@
     DOM.btnCopy.addEventListener('click', handleCopy);
     DOM.btnClear.addEventListener('click', handleClear);
     DOM.btnNewSentence.addEventListener('click', handleNewSentence);
+
+    // Event Listeners: Mode Toggles
+    if (DOM.speedToggleBtn) {
+      DOM.speedToggleBtn.addEventListener('click', () => {
+        state.speedMode = state.speedMode === 'turbo' ? 'normal' : 'turbo';
+        localStorage.setItem('signspeak-speed', state.speedMode);
+        updateSpeedUI();
+        showToast(state.speedMode === 'turbo' ? '⚡ Turbo Mode: 380ms Dwell' : '🐢 Normal Mode: 540ms Dwell');
+      });
+    }
+
+    if (DOM.practiceModeBtn) {
+      DOM.practiceModeBtn.addEventListener('click', togglePracticeMode);
+    }
+
+    if (DOM.practiceSkipBtn) {
+      DOM.practiceSkipBtn.addEventListener('click', () => {
+        nextPracticeTarget();
+        showToast(`Skipped to target: '${state.practiceTarget}'`);
+      });
+    }
 
     // Event Listeners: Camera Controls
     DOM.cameraToggleBtn.addEventListener('click', () => {

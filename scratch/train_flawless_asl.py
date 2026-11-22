@@ -29,8 +29,7 @@ def canonical_normalize(landmarks):
 
 def generate_hand(letter, is_left, rng):
     """
-    Builds a realistic 21-joint 3D MediaPipe hand model for the given letter.
-    is_left: True if left hand, False if right hand.
+    Builds a high-fidelity 21-joint 3D MediaPipe hand model for all 26 ASL alphabet signs.
     """
     lm = np.zeros((21, 3), dtype=np.float32)
     palm_w = rng.uniform(0.18, 0.23)
@@ -86,18 +85,18 @@ def generate_hand(letter, is_left, rng):
         lm[4] = [h_sign * palm_w * 2.1, -palm_h * 0.42, rng.uniform(-0.02, 0.02)]
         
     def thumb_across_front():
-        lm[3] = [0.0, palm_h * 0.05, rng.uniform(0.09, 0.14)]
-        lm[4] = [-h_sign * palm_w * 0.35, palm_h * 0.08, rng.uniform(0.11, 0.16)]
+        lm[3] = [0.0, -palm_h * 0.35, rng.uniform(0.08, 0.13)]
+        lm[4] = [-h_sign * palm_w * 0.35, -palm_h * 0.42, rng.uniform(0.10, 0.15)]
         
-    def thumb_tuck_under(target_x):
-        lm[3] = [target_x * 0.7, -palm_h * 0.40, rng.uniform(0.04, 0.08)]
-        lm[4] = [target_x,       -palm_h * 0.45, rng.uniform(0.02, 0.06)]
+    def thumb_tuck_under(target_x, depth_y=-0.40):
+        lm[3] = [target_x * 0.7, -palm_h * (depth_y - 0.05), rng.uniform(0.04, 0.08)]
+        lm[4] = [target_x,       -palm_h * depth_y,          rng.uniform(0.02, 0.06)]
         
     def thumb_touch(target_pt):
         lm[3] = [(lm[2][0] + target_pt[0]) * 0.5, (lm[2][1] + target_pt[1]) * 0.5, rng.uniform(0.05, 0.10)]
         lm[4] = [target_pt[0] + rng.uniform(-0.02, 0.02), target_pt[1] + rng.uniform(-0.02, 0.02), target_pt[2] + rng.uniform(0.01, 0.03)]
 
-    # Implement distinct ASL letters
+    # 26 Pure ASL Sign Formations
     if letter == 'A':
         curl_finger(5); curl_finger(9); curl_finger(13); curl_finger(17)
         thumb_up_alongside()
@@ -106,7 +105,8 @@ def generate_hand(letter, is_left, rng):
         ext_finger(9, 0, 1.05)
         ext_finger(13, 0, 0.95)
         ext_finger(17, 0, 0.80)
-        thumb_across_front()
+        lm[3] = [h_sign * palm_w * 0.35, -palm_h * 0.35, 0.08]
+        lm[4] = [0.0, -palm_h * 0.38, 0.10]
     elif letter == 'C':
         curve_finger(5, 0.02); curve_finger(9, 0.0); curve_finger(13, -0.02); curve_finger(17, -0.04)
         lm[3] = [h_sign * palm_w * 0.85, -palm_h * 0.40, 0.08]
@@ -121,9 +121,8 @@ def generate_hand(letter, is_left, rng):
             lm[b+1] = [mcp[0], mcp[1] - palm_h*0.20, 0.05]
             lm[b+2] = [mcp[0], mcp[1] - palm_h*0.10, 0.10]
             lm[b+3] = [mcp[0], mcp[1] + palm_h*0.02, 0.08]
-        # Thumb is tucked tightly underneath the curled fingertips
-        lm[3] = [0.0, -palm_h * 0.30, 0.06]
-        lm[4] = [h_sign * palm_w * 0.20, -palm_h * 0.35, 0.04]
+        lm[3] = [0.0, -palm_h * 0.25, 0.06]
+        lm[4] = [h_sign * palm_w * 0.15, -palm_h * 0.28, 0.04]
     elif letter == 'F':
         curve_finger(5)
         ext_finger(9, 0, 1.05)
@@ -131,9 +130,7 @@ def generate_hand(letter, is_left, rng):
         ext_finger(17, 0, 0.80)
         thumb_touch(lm[8])
     elif letter == 'G':
-        # Index extended along hand
         ext_finger(5, spread_x=0.0, length_mult=1.0)
-        # Thumb extended parallel alongside index, slightly separated
         lm[3] = [h_sign * palm_w * 0.85, -palm_h * 0.65, 0.02]
         lm[4] = [h_sign * palm_w * 0.80, -palm_h * 0.90, 0.03]
         curl_finger(9); curl_finger(13); curl_finger(17)
@@ -148,7 +145,7 @@ def generate_hand(letter, is_left, rng):
         thumb_across_front()
     elif letter == 'J':
         curl_finger(5); curl_finger(9); curl_finger(13)
-        ext_finger(17, -h_sign * palm_w * 0.25, 0.80)
+        ext_finger(17, -h_sign * palm_w * 0.30, 0.80)
         thumb_across_front()
     elif letter == 'K':
         ext_finger(5, 0, 1.0)
@@ -156,7 +153,8 @@ def generate_hand(letter, is_left, rng):
         lm[11] = [lm[9][0], lm[9][1] - f_len * 0.70, 0.16]
         lm[12] = [lm[9][0], lm[9][1] - f_len * 0.95, 0.24]
         curl_finger(13); curl_finger(17)
-        thumb_up_alongside()
+        lm[3] = [lm[5][0], -palm_h * 0.60, 0.08]
+        lm[4] = [lm[9][0], -palm_h * 0.70, 0.14]
     elif letter == 'L':
         ext_finger(5, 0, 1.0)
         curl_finger(9); curl_finger(13); curl_finger(17)
@@ -168,7 +166,7 @@ def generate_hand(letter, is_left, rng):
             lm[b+2] = [mcp[0], mcp[1] + palm_h*0.02, 0.12]
             lm[b+3] = [mcp[0], mcp[1] + palm_h*0.16, 0.08]
         curl_finger(17)
-        thumb_tuck_under(lm[13][0])
+        thumb_tuck_under(-h_sign * palm_w * 0.55, depth_y=-0.38)
     elif letter == 'N':
         for b in [5, 9]:
             mcp = lm[b]
@@ -176,7 +174,7 @@ def generate_hand(letter, is_left, rng):
             lm[b+2] = [mcp[0], mcp[1] + palm_h*0.02, 0.12]
             lm[b+3] = [mcp[0], mcp[1] + palm_h*0.16, 0.08]
         curl_finger(13); curl_finger(17)
-        thumb_tuck_under(lm[9][0])
+        thumb_tuck_under(-h_sign * palm_w * 0.15, depth_y=-0.38)
     elif letter == 'O':
         for b in [5, 9, 13, 17]:
             curve_finger(b)
@@ -193,7 +191,6 @@ def generate_hand(letter, is_left, rng):
         curl_finger(9); curl_finger(13); curl_finger(17)
         lm[3] = [lm[2][0], lm[2][1] + f_len * 0.3, 0.0]; lm[4] = [lm[2][0], lm[2][1] + f_len * 0.7, 0.0]
     elif letter == 'R':
-        # Crossed index & middle
         mcp5 = lm[5]; mcp9 = lm[9]
         lm[6] = [mcp5[0] - h_sign*palm_w*0.1, mcp5[1] - f_len*0.35, -0.02]
         lm[7] = [mcp5[0] - h_sign*palm_w*0.25, mcp5[1] - f_len*0.70, -0.02]
@@ -205,13 +202,14 @@ def generate_hand(letter, is_left, rng):
         thumb_across_front()
     elif letter == 'S':
         curl_finger(5); curl_finger(9); curl_finger(13); curl_finger(17)
-        thumb_across_front()
+        lm[3] = [0.0, -palm_h * 0.35, 0.12]
+        lm[4] = [-h_sign * palm_w * 0.25, -palm_h * 0.38, 0.14]
     elif letter == 'T':
         curl_finger(5); curl_finger(9); curl_finger(13); curl_finger(17)
-        thumb_tuck_under(lm[5][0])
+        thumb_tuck_under(h_sign * palm_w * 0.35, depth_y=-0.42)
     elif letter == 'U':
-        ext_finger(5, spread_x=-h_sign * palm_w * 0.05, length_mult=1.0)
-        ext_finger(9, spread_x=h_sign * palm_w * 0.05, length_mult=1.05)
+        ext_finger(5, spread_x=-h_sign * palm_w * 0.04, length_mult=1.0)
+        ext_finger(9, spread_x=h_sign * palm_w * 0.04, length_mult=1.05)
         curl_finger(13); curl_finger(17)
         thumb_across_front()
     elif letter == 'V':
@@ -238,40 +236,35 @@ def generate_hand(letter, is_left, rng):
         curl_finger(9); curl_finger(13); curl_finger(17)
         thumb_across_front()
 
-    # Apply 3D camera rotation jitter before canonical normalization
-    # Roll (Z rot): up to +/- 30 deg
-    roll = rng.uniform(-0.52, 0.52)
+    # 3D Camera Rotation Jitter
+    roll = rng.uniform(-0.52, 0.52) # +/- 30 deg
     c_r = np.cos(roll); s_r = np.sin(roll)
     R_z = np.array([[c_r, -s_r, 0], [s_r, c_r, 0], [0, 0, 1]], dtype=np.float32)
     
-    # Pitch (X rot): up to +/- 15 deg
-    pitch = rng.uniform(-0.26, 0.26)
+    pitch = rng.uniform(-0.30, 0.30) # +/- 17 deg
     c_p = np.cos(pitch); s_p = np.sin(pitch)
     R_x = np.array([[1, 0, 0], [0, c_p, -s_p], [0, s_p, c_p]], dtype=np.float32)
     
-    # Yaw (Y rot): up to +/- 15 deg
-    yaw = rng.uniform(-0.26, 0.26)
+    yaw = rng.uniform(-0.30, 0.30) # +/- 17 deg
     c_y = np.cos(yaw); s_y = np.sin(yaw)
     R_y = np.array([[c_y, 0, s_y], [0, 1, 0], [-s_y, 0, c_y]], dtype=np.float32)
     
     R_comb = np.dot(R_z, np.dot(R_x, R_y))
     lm_rotated = np.dot(lm, R_comb.T)
     
-    # Add MediaPipe detection noise
-    noise = rng.normal(0, 0.012, lm.shape).astype(np.float32)
+    # MediaPipe detection noise
+    noise = rng.normal(0, 0.010, lm.shape).astype(np.float32)
     lm_noisy = lm_rotated + noise
     
-    # Finally: Apply CANONICAL NORMALIZATION (guarantees training input matches web/classifier.js)
     return canonical_normalize(lm_noisy)
 
 if __name__ == '__main__':
-    print('Generating flawless ASL training set across all 26 letters...')
+    print('Generating high-precision ASL dataset across 26 letters (1,500 samples/class = 39,000 total)...')
     rng = np.random.RandomState(42)
     X = []
     y = []
     
-    # Generate 1000 samples per class (500 right hand, 500 left hand)
-    samples_per_class = 1000
+    samples_per_class = 1500
     for cid, letter in enumerate(ALPHABETS):
         for i in range(samples_per_class):
             is_left = (i % 2 == 1)
@@ -289,25 +282,25 @@ if __name__ == '__main__':
         hidden_layer_sizes=(256, 128, 64),
         activation='relu',
         solver='adam',
-        max_iter=150,
+        max_iter=180,
         batch_size=128,
+        alpha=0.0001,
         random_state=42,
         early_stopping=True,
         validation_fraction=0.1
     )
     
-    print('Training MLP classifier...')
+    print('Training optimized MLP classifier...')
     mlp.fit(X_train, y_train)
     test_acc = accuracy_score(y_test, mlp.predict(X_test))
     print(f'Test Accuracy: {test_acc * 100:.2f}%')
     
-    # Compute centroids for KNN fallback
+    # Compute KNN centroids
     centroids = {}
     for cid, letter in enumerate(ALPHABETS):
         class_samples = X[y == cid]
         centroids[letter] = np.mean(class_samples, axis=0).tolist()
         
-    # Export model.json
     weights = [w.tolist() for w in mlp.coefs_]
     biases = [b.tolist() for b in mlp.intercepts_]
     
@@ -329,4 +322,4 @@ if __name__ == '__main__':
     with open('web/model/landmarks.json', 'w') as f:
         json.dump({'classes': ALPHABETS, 'centroids': centroids}, f)
         
-    print('Exported model.json, labels.json, landmarks.json to web/model/')
+    print('Successfully exported updated model artifacts to web/model/!')
