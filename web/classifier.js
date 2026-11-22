@@ -297,10 +297,10 @@ class SignClassifier {
     if (idxExt && midExt && ringCurl && pinkyCurl) {
       if (isPointingDown) return { letter: 'P', confidence: 0.98 };
       if (isPointingSide) return { letter: 'H', confidence: 0.98 };
-      
+
       // K: thumb tip placed upwards between index and middle
       const thumbBetweenIdxMid = (rot[4].y < rot[6].y + 0.05 * palmLen) &&
-                                 (d(4, 9) < 0.38 * palmLen || d(4, 5) < 0.38 * palmLen);
+        (d(4, 9) < 0.38 * palmLen || d(4, 5) < 0.38 * palmLen);
       if (thumbBetweenIdxMid && rot[4].y < rot[2].y - 0.04 * palmLen) {
         return { letter: 'K', confidence: 0.98 };
       }
@@ -361,21 +361,21 @@ class SignClassifier {
     if (idxCurl && midCurl && ringCurl && pinkyCurl) {
       // A: thumb pointing upright along the side of index MCP (hand-invariant)
       const thumbUpright = (rot[4].y < rot[2].y - 0.05 * palmLen) &&
-                           (d(4, 5) < 0.45 * palmLen) &&
-                           (rot[4].y < rot[8].y - 0.04 * palmLen);
+        (d(4, 5) < 0.45 * palmLen) &&
+        (rot[4].y < rot[8].y - 0.04 * palmLen);
       if (thumbUpright) return { letter: 'A', confidence: 0.98 };
 
       // E: thumb tucked fully under curled fingertips forming a shelf
       const thumbUnderFingertips = (rot[4].y >= rot[8].y - 0.05 * palmLen) &&
-                                  (d(4, 8) < 0.38 * palmLen || d(4, 12) < 0.38 * palmLen);
+        (d(4, 8) < 0.38 * palmLen || d(4, 12) < 0.38 * palmLen);
       if (thumbUnderFingertips) {
         return { letter: 'E', confidence: 0.98 };
       }
 
       // S: thumb folded horizontally ACROSS the front of index/middle knuckles
       const thumbFoldedAcross = (rot[4].y < rot[8].y) &&
-                                (d(4, 9) < 0.42 * palmLen || d(4, 5) < 0.40 * palmLen) &&
-                                (rot[4].y > rot[5].y - 0.05 * palmLen);
+        (d(4, 9) < 0.42 * palmLen || d(4, 5) < 0.40 * palmLen) &&
+        (rot[4].y > rot[5].y - 0.05 * palmLen);
       if (thumbFoldedAcross) {
         return { letter: 'S', confidence: 0.96 };
       }
