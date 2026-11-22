@@ -20,12 +20,6 @@
         </div>
       </div>
       <div class="header-controls">
-        <button id="practice-mode-btn" class="btn" type="button" aria-label="Toggle Practice Mode">
-          🎯 Practice
-        </button>
-        <button id="speed-toggle-btn" class="btn" type="button" aria-label="Toggle Speed Mode">
-          ⚡ Turbo
-        </button>
         <button id="asl-guide-btn" class="btn" type="button" aria-label="Open Sign Guide">
           📖 Guide
         </button>
@@ -109,33 +103,6 @@
           <span class="top3-label">Top 3:</span>
           <div id="top3-items" class="top3-items">
             <span class="suggestion-hint">Top predictions will appear here</span>
-          </div>
-        </div>
-
-        <!-- Live Finger Telemetry HUD -->
-        <div id="finger-telemetry-container" class="finger-telemetry-container" aria-label="Finger Extension Status">
-          <span class="telemetry-label">Fingers:</span>
-          <div class="finger-chips-grid">
-            <span id="finger-thumb" class="finger-chip">👍 Thumb</span>
-            <span id="finger-index" class="finger-chip">☝️ Index</span>
-            <span id="finger-middle" class="finger-chip">🖐️ Mid</span>
-            <span id="finger-ring" class="finger-chip">💍 Ring</span>
-            <span id="finger-pinky" class="finger-chip">🤙 Pinky</span>
-          </div>
-        </div>
-
-        <!-- Practice Mode Banner (Interactive Self-Trainer) -->
-        <div id="practice-banner" class="practice-banner hidden" role="region" aria-label="Practice Mode">
-          <div class="practice-info">
-            <span class="practice-title">🎯 ASL Practice Mode</span>
-            <span class="practice-instructions">Sign the letter below and hold it steady:</span>
-          </div>
-          <div class="practice-target-box">
-            <div id="practice-target-glyph" class="practice-target-glyph">A</div>
-            <div class="practice-stats">
-              <span id="practice-streak-badge" class="practice-streak-badge">🔥 Streak: 0</span>
-              <button id="practice-skip-btn" class="btn btn-sm" type="button">Skip ⏭</button>
-            </div>
           </div>
         </div>
 
@@ -264,8 +231,8 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
   <!-- Application Logic -->
-  <script src="words.js?v=9"></script>
-  <script src="classifier.js?v=9"></script>
-  <script src="app.js?v=9"></script>
+  <script src="words.js?v=11"></script>
+  <script src="classifier.js?v=11"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>

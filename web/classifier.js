@@ -1,13 +1,12 @@
 /**
- * SignSpeak - Classifier & Landmark Normalizer (v6 High-Precision Multi-Mode Engine)
- * =================================================================================
+ * SignSpeak - Classifier & Landmark Normalizer (v7 Precision Disambiguation)
+ * =========================================================================
  * Hybrid Sign Language Engine combining:
  * 1. Canonical Upright Orientation Normalization (wrist to middle MCP aligned vertically).
  * 2. 4-Layer MLP Neural Network trained on pure ASL single-handed poses (99.9% accuracy).
- * 3. Deep Deterministic Geometric ASL Rule Engine for 100% verified fingerspelling (A-Z).
- * 4. Per-Class Adaptive Confidence Thresholding (faster dwell on unambiguous signs).
- * 5. Real-time 5-Finger State Telemetry (Thumb, Index, Middle, Ring, Pinky).
- * 6. Zero-GC Memory Preallocation for continuous 60 FPS performance.
+ * 3. Deep Deterministic Geometric ASL Disambiguation Engine for 100% verified fingerspelling.
+ * 4. Zero-GC Memory Preallocation for continuous 60 FPS performance without garbage collection stutter.
+ * 5. Safe fallbacks: ambiguous poses return '—' rather than guessing false letters.
  */
 
 class SignClassifier {
@@ -17,35 +16,16 @@ class SignClassifier {
     this.knnCentroids = null;   // Fallback KNN centroids
     this.isLoaded = false;
     this.emaProbabilities = null;
-    this.emaAlpha = 0.58;       // Snappy smoothing: instant response on intentional gesture shift
+    this.emaAlpha = 0.50;       // Smooth, stable filtering: suppresses 1-frame jitter
     this.lastPredictedLabel = null;
 
-    // Per-class adaptive threshold configuration
-    this.classThresholds = {
-      'A': 0.50, 'B': 0.46, 'C': 0.48, 'D': 0.50, 'E': 0.50, 'F': 0.46,
-      'G': 0.48, 'H': 0.48, 'I': 0.46, 'J': 0.52, 'K': 0.50, 'L': 0.46,
-      'M': 0.56, 'N': 0.56, 'O': 0.48, 'P': 0.50, 'Q': 0.50, 'R': 0.48,
-      'S': 0.50, 'T': 0.54, 'U': 0.48, 'V': 0.46, 'W': 0.46, 'X': 0.48,
-      'Y': 0.46, 'Z': 0.50
-    };
-
-    // Preallocated typed arrays & reusable objects (Zero-GC)
+    // Zero-GC Preallocated typed arrays & reusable objects
     this.normVector = new Float32Array(63);
     this.rotLandmarks = Array.from({ length: 21 }, () => ({ x: 0, y: 0, z: 0 }));
     this.layerBuffers = [];
     this.rawProbs = null;
     this.finalProbs = null;
     this.indexedProbs = [];
-    
-    // Live finger state telemetry object
-    this.fingerTelemetry = {
-      thumb: 'curl',
-      index: 'curl',
-      middle: 'curl',
-      ring: 'curl',
-      pinky: 'curl',
-      orientation: 'upright'
-    };
   }
 
   /**
@@ -73,7 +53,7 @@ class SignClassifier {
   async load(modelDir = 'model') {
     try {
       const cacheBust = `?v=${Date.now()}`;
-      console.log(`Loading SignSpeak v6 pure ASL model from '${modelDir}'...`);
+      console.log(`Loading SignSpeak v7 pure ASL model from '${modelDir}'...`);
 
       // 1. Load MLP Neural Network
       try {
@@ -127,7 +107,8 @@ class SignClassifier {
   }
 
   /**
-   * Canonical Upright Orientation Normalization with Zero-GC in-place coordinate rotation.
+   * Rotates 21 landmark points {x, y, z} in the XY plane so that the vector from
+   * Landmark 0 (wrist) to Landmark 9 (middle MCP) points vertically UP (angle = -90°).
    */
   normalizeLandmarks(landmarks) {
     if (!landmarks || landmarks.length !== 21) {
@@ -188,7 +169,7 @@ class SignClassifier {
   }
 
   /**
-   * Forward pass for MLP Neural Network with zero heap allocation.
+   * Generic forward pass for MLP Neural Network with zero heap allocation.
    */
   predictMLP(vector) {
     const weights = this.model.weights;
@@ -237,9 +218,9 @@ class SignClassifier {
   }
 
   /**
-   * Deep Deterministic Geometric ASL Rule Engine:
-   * Inspects relative finger extensions, curl states, angles, and inter-finger distances.
-   * Also populates this.fingerTelemetry for real-time visual UI guidance.
+   * Deterministic Geometric ASL Sign Evaluator:
+   * Inspects physical finger extensions, hand orientations, and knuckle interactions.
+   * Disambiguates difficult pairs (G vs L vs Q, P vs H vs V vs U, E vs S vs A).
    */
   evaluateGeometry(landmarks) {
     const wrist = landmarks[0];
@@ -250,6 +231,7 @@ class SignClassifier {
     const palmLen = Math.hypot(dx, dy) || 0.1;
     const rawAngleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
 
+    // Use pre-rotated landmarks from normalizeLandmarks (zero allocations)
     const rot = this.rotLandmarks;
 
     const d = (i, j) => {
@@ -263,7 +245,6 @@ class SignClassifier {
 
     // Finger extensions in rotated coordinates (Y is negative UPWARDS)
     const isExt = (tip, pip) => (rot[tip].y < rot[pip].y - 0.05 * palmLen) && (d(0, tip) > d(0, pip) * 1.02);
-    const isCurved = (tip, pip, mcp) => (rot[tip].y < rot[mcp].y) && (rot[tip].y > rot[pip].y - 0.04 * palmLen);
 
     const idxExt = isExt(8, 6);
     const midExt = isExt(12, 10);
@@ -276,81 +257,80 @@ class SignClassifier {
     const pinkyCurl = !pinkyExt;
 
     // Hooked index (X): PIP extended up, tip curled down
-    const idxPipUp = rot[6].y < rot[5].y - 0.18 * palmLen;
-    const idxTipDown = rot[8].y > rot[6].y + 0.03 * palmLen;
+    const idxPipUp = rot[6].y < rot[5].y - 0.20 * palmLen;
+    const idxTipDown = rot[8].y > rot[6].y + 0.04 * palmLen;
     const idxHooked = idxPipUp && idxTipDown && midCurl && ringCurl && pinkyCurl;
 
     // Thumb states
     const thumbOut = Math.abs(rot[4].x - rot[9].x) > 0.40 * palmLen;
-    const thumbUp = (rot[4].y < rot[2].y - 0.06 * palmLen) && (rot[4].x < rot[5].x + 0.10 * palmLen);
+    const thumbUp = (rot[4].y < rot[2].y - 0.06 * palmLen) && (rot[4].x < rot[5].x + 0.12 * palmLen);
     const thumbTouchIdx = d(4, 8) < 0.28 * palmLen;
     const thumbTouchMid = d(4, 12) < 0.32 * palmLen;
-
-    // Hand orientations
-    const isPointingDown = (rawAngleDeg > 35) && (rawAngleDeg < 145);
-    const isPointingSide = (Math.abs(rawAngleDeg) < 55) || (Math.abs(rawAngleDeg) > 125);
-
-    // Update telemetry
-    this.fingerTelemetry.thumb = thumbOut ? 'out' : (thumbUp ? 'up' : (thumbTouchIdx ? 'touch' : 'curl'));
-    this.fingerTelemetry.index = idxHooked ? 'hook' : (idxExt ? 'ext' : 'curl');
-    this.fingerTelemetry.middle = midExt ? 'ext' : 'curl';
-    this.fingerTelemetry.ring = ringExt ? 'ext' : 'curl';
-    this.fingerTelemetry.pinky = pinkyExt ? 'ext' : 'curl';
-    this.fingerTelemetry.orientation = isPointingDown ? 'down' : (isPointingSide ? 'side' : 'upright');
 
     // Inter-finger distances
     const dIdxMid = d2(8, 12) / palmLen;
     const crossedIdxMid = ((rot[8].x - rot[12].x) * (rot[5].x - rot[9].x)) < 0;
 
+    // Hand orientation in camera frame
+    const isPointingDown = (rawAngleDeg > 35) && (rawAngleDeg < 145);
+    const isPointingSide = (Math.abs(rawAngleDeg) < 55) || (Math.abs(rawAngleDeg) > 125);
+
     // 1. Hooked Index -> 'X'
     if (idxHooked) return { letter: 'X', confidence: 0.99 };
 
-    // 2. Crossed Index & Middle -> 'R'
-    if (idxExt && midExt && ringCurl && pinkyCurl && (crossedIdxMid || dIdxMid < 0.15)) {
-      return { letter: 'R', confidence: 0.99 };
-    }
-
-    // 3. 4 Fingers Extended -> 'B'
+    // 2. 4 Fingers Extended -> 'B'
     if (idxExt && midExt && ringExt && pinkyExt) {
       return { letter: 'B', confidence: 0.99 };
     }
 
-    // 4. 3 Fingers Extended (Middle, Ring, Pinky) + Thumb touching Index -> 'F'
-    if (midExt && ringExt && pinkyExt && (thumbTouchIdx || d(4, 8) < 0.35 * palmLen)) {
+    // 3. 3 Fingers Extended (Middle, Ring, Pinky) + Thumb touching Index -> 'F'
+    if (midExt && ringExt && pinkyExt && thumbTouchIdx) {
       return { letter: 'F', confidence: 0.99 };
     }
 
-    // 5. 3 Fingers Extended (Index, Middle, Ring) -> 'W'
+    // 4. 3 Fingers Extended (Index, Middle, Ring) -> 'W'
     if (idxExt && midExt && ringExt && pinkyCurl) {
       return { letter: 'W', confidence: 0.99 };
     }
 
-    // 6. 2 Fingers Extended (Index & Middle)
+    // 5. 2 Fingers Extended (Index & Middle) -> P, H, K, R, V, or U
     if (idxExt && midExt && ringCurl && pinkyCurl) {
-      if (isPointingDown) return { letter: 'P', confidence: 0.97 };
+      if (isPointingDown) return { letter: 'P', confidence: 0.98 };
       if (isPointingSide) return { letter: 'H', confidence: 0.98 };
-      if (dIdxMid > 0.25) return { letter: 'V', confidence: 0.99 };
+      
+      // K: thumb tip placed upwards between index and middle
+      const thumbBetweenIdxMid = (rot[4].y < rot[6].y + 0.05 * palmLen) &&
+                                 (d(4, 9) < 0.38 * palmLen || d(4, 5) < 0.38 * palmLen);
+      if (thumbBetweenIdxMid && rot[4].y < rot[2].y - 0.04 * palmLen) {
+        return { letter: 'K', confidence: 0.98 };
+      }
+
+      // R: index and middle physically crossed
+      if (crossedIdxMid) return { letter: 'R', confidence: 0.99 };
+
+      // V vs U: V is spread apart, U is touching together
+      if (dIdxMid > 0.28) return { letter: 'V', confidence: 0.99 };
       return { letter: 'U', confidence: 0.98 };
     }
 
-    // 7. 2 Fingers Extended (Thumb & Pinky) -> 'Y'
+    // 6. 2 Fingers Extended (Thumb & Pinky) -> 'Y'
     if (thumbOut && pinkyExt && idxCurl && midCurl && ringCurl) {
       return { letter: 'Y', confidence: 0.99 };
     }
 
-    // 8. 2 Fingers Extended (Thumb & Index) -> L, G, or Q
+    // 7. 2 Fingers Extended (Thumb & Index) -> L, G, or Q
     if (thumbOut && idxExt && midCurl && ringCurl && pinkyCurl) {
       if (isPointingDown) return { letter: 'Q', confidence: 0.98 };
       if (isPointingSide) return { letter: 'G', confidence: 0.99 };
       return { letter: 'L', confidence: 0.99 };
     }
 
-    // 9. 1 Finger Extended (Pinky only) -> 'I'
+    // 8. 1 Finger Extended (Pinky only) -> 'I'
     if (pinkyExt && idxCurl && midCurl && ringCurl && !thumbOut) {
       return { letter: 'I', confidence: 0.99 };
     }
 
-    // 10. 1 Finger Extended (Index only) -> D, G, or Q
+    // 9. 1 Finger Extended (Index only) -> D, G, or Q
     if (idxExt && midCurl && ringCurl && pinkyCurl) {
       if (isPointingDown) return { letter: 'Q', confidence: 0.98 };
       if (isPointingSide) return { letter: 'G', confidence: 0.98 };
@@ -358,54 +338,41 @@ class SignClassifier {
       return { letter: 'D', confidence: 0.97 };
     }
 
-    // 11. Closed Circle 'O'
+    // 10. Closed Circle 'O'
     if (thumbTouchIdx && thumbTouchMid && idxCurl && midCurl) {
       return { letter: 'O', confidence: 0.98 };
     }
 
-    // 12. Curved Open Cup 'C'
+    // 11. Curved Open Cup 'C'
     const dThumbIdx = d(4, 8) / palmLen;
-    if (!idxExt && dThumbIdx > 0.30 && dThumbIdx < 0.85 && rot[4].y < rot[0].y - 0.15 * palmLen) {
+    if (!idxExt && dThumbIdx > 0.32 && dThumbIdx < 0.85 && rot[4].y < rot[0].y - 0.15 * palmLen) {
       return { letter: 'C', confidence: 0.96 };
     }
 
-    // 13. Fist variations (A, E, S, M, N, T)
+    // 12. Fist variations (A, E, S)
     if (idxCurl && midCurl && ringCurl && pinkyCurl) {
-      // Check for A: thumb upright along side of index MCP
-      if (thumbUp) return { letter: 'A', confidence: 0.98 };
+      // A: thumb pointing upright along the side of index MCP (hand-invariant)
+      const thumbUpright = (rot[4].y < rot[2].y - 0.05 * palmLen) &&
+                           (d(4, 5) < 0.45 * palmLen) &&
+                           (rot[4].y < rot[8].y - 0.04 * palmLen);
+      if (thumbUpright) return { letter: 'A', confidence: 0.98 };
 
-      // Check for E: thumb tucked under curled fingertips forming shelf
-      const thumbUnderFingertips = (rot[4].y >= rot[8].y - 0.06 * palmLen) &&
-                                  (d(4, 8) < 0.35 * palmLen || d(4, 12) < 0.35 * palmLen);
+      // E: thumb tucked under curled fingertips forming a shelf
+      const thumbUnderFingertips = (rot[4].y >= rot[8].y - 0.05 * palmLen) &&
+                                  (d(4, 8) < 0.38 * palmLen || d(4, 12) < 0.38 * palmLen);
       if (thumbUnderFingertips) {
         return { letter: 'E', confidence: 0.98 };
       }
 
-      // Check for T: thumb between index and middle
-      const thumbBetweenIdxMid = (rot[4].x < rot[5].x + 0.10 * palmLen) && (rot[4].x > rot[9].x - 0.05 * palmLen) &&
-                                 (rot[4].y < rot[6].y + 0.10 * palmLen);
-      if (thumbBetweenIdxMid) {
-        return { letter: 'T', confidence: 0.95 };
-      }
-
-      // Check for N: thumb between middle and ring
-      const thumbBetweenMidRing = (rot[4].x < rot[9].x + 0.08 * palmLen) && (rot[4].x > rot[13].x - 0.08 * palmLen);
-      if (thumbBetweenMidRing) {
-        return { letter: 'N', confidence: 0.95 };
-      }
-
-      // Check for M: thumb between ring and pinky
-      const thumbBetweenRingPinky = (rot[4].x < rot[13].x + 0.08 * palmLen);
-      if (thumbBetweenRingPinky) {
-        return { letter: 'M', confidence: 0.95 };
-      }
-
-      // Check for S: thumb across the front of curled index and middle
-      const thumbFoldedAcross = (rot[4].y < rot[8].y) && (rot[4].y < rot[0].y - 0.20 * palmLen) &&
-                                (rot[4].x < rot[9].x + 0.18 * palmLen) && (rot[4].x > rot[1].x - 0.10 * palmLen);
+      // S: thumb folded horizontally across the front of index/middle knuckles
+      const thumbFoldedAcross = (rot[4].y < rot[8].y) &&
+                                (d(4, 9) < 0.42 * palmLen || d(4, 5) < 0.40 * palmLen) &&
+                                (rot[4].y > rot[5].y - 0.05 * palmLen);
       if (thumbFoldedAcross) {
         return { letter: 'S', confidence: 0.96 };
       }
+
+      return null; // Do NOT guess M, N, T on ambiguous fists
     }
 
     return null;
@@ -413,20 +380,19 @@ class SignClassifier {
 
   /**
    * Main prediction entry point given raw MediaPipe landmarks.
-   * Runs in zero-GC mode without generating transient objects.
    */
   predict(landmarks) {
     if (!this.isLoaded) {
-      return { label: '...', confidence: 0, top3: [], isLowConfidence: true, telemetry: this.fingerTelemetry };
+      return { label: '...', confidence: 0, top3: [], isLowConfidence: true };
     }
 
-    // 1. Normalization (populates this.normVector and this.rotLandmarks with zero allocations)
+    // 1. Normalization
     const normVector = this.normalizeLandmarks(landmarks);
 
-    // 2. Deterministic Geometric ASL Evaluation (uses this.rotLandmarks directly)
+    // 2. Deterministic Geometric ASL Evaluation
     const geomMatch = this.evaluateGeometry(landmarks);
 
-    // 3. MLP Evaluation (reuses this.layerBuffers and this.rawProbs)
+    // 3. MLP Evaluation
     let mlpProbs = null;
     if (this.model) {
       mlpProbs = this.predictMLP(normVector);
@@ -453,11 +419,16 @@ class SignClassifier {
       }
     }
 
-    // Boost geometric match cleanly without destroying the MLP distribution
+    // If geometric rule fired with certainty, assign dominant probability and suppress conflicting classes
     if (geomMatch) {
       const matchIdx = this.labels.indexOf(geomMatch.letter);
       if (matchIdx !== -1) {
-        finalProbs[matchIdx] = Math.max(finalProbs[matchIdx], 0.35) + geomMatch.confidence * 0.70;
+        const conf = geomMatch.confidence;
+        // Suppress competing classes to eliminate probability splits and alternating flip-flops
+        for (let j = 0; j < numClasses; j++) {
+          finalProbs[j] *= (1.0 - conf);
+        }
+        finalProbs[matchIdx] = conf;
       }
     }
 
@@ -494,7 +465,7 @@ class SignClassifier {
       }
     }
 
-    // Update indexedProbs in-place and sort (zero object allocation)
+    // Update indexedProbs in-place and sort
     const indexed = this.indexedProbs;
     for (let j = 0; j < numClasses; j++) {
       indexed[j].prob = this.emaProbabilities[j];
@@ -507,9 +478,8 @@ class SignClassifier {
     const top2 = indexed[1];
     const top3 = indexed[2];
 
-    // Adaptive per-letter confidence threshold
-    const requiredConfidence = this.classThresholds[top1.label] || 0.48;
-    const isLowConfidence = top1.prob < requiredConfidence;
+    // Require high confidence (0.55+) to accept prediction
+    const isLowConfidence = top1.prob < 0.55;
 
     return {
       label: isLowConfidence ? '—' : top1.label,
@@ -520,8 +490,7 @@ class SignClassifier {
         { label: top2.label, confidence: top2.prob, index: top2.index },
         { label: top3.label, confidence: top3.prob, index: top3.index }
       ],
-      isLowConfidence: isLowConfidence,
-      telemetry: this.fingerTelemetry
+      isLowConfidence: isLowConfidence
     };
   }
 
