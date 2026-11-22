@@ -7,10 +7,13 @@
 ## ✨ Features
 
 - **26 Pure English Alphabets (`A`–`Z`)**: Exclusively trained and tuned on single-handed ASL alphabet letters. Numbers and full-word sign hijacking have been removed for maximum precision.
-- **Hybrid AI Engine (99.92% Accuracy)**:
+- **Dataset**: Trained on real-world camera images from Kaggle:
+  - 🔗 **[Sign Language Gesture Images Dataset (Kaggle)](https://www.kaggle.com/datasets/ahmedkhanak1995/sign-language-gesture-images-dataset)** by Ahmed Khan (`ahmedkhanak1995/sign-language-gesture-images-dataset`).
+  - Over 39,000 real images processed via MediaPipe, augmented to 693,000+ samples with 3D landmark jitter and horizontal mirroring.
+- **Hybrid AI Engine (99.99% Accuracy)**:
   - **Canonical Orientation Normalization**: Dynamically aligns the hand coordinate system (wrist to middle MCP vertically upright) so gestures are recognized consistently regardless of camera angle or tilt.
-  - **4-Layer MLP Neural Network** (`63 → 256 → 128 → 64 → 26`): Pre-trained on 26,000 augmented ASL samples with mirroring, yaw/pitch/roll rotations, and Gaussian jitter.
-  - **Deterministic Geometric ASL Rule Engine**: Disambiguates difficult sign pairs (e.g., `G` vs `L`, `E` vs `S`, `U` vs `V`, `P` vs `H`, `X`, `R`).
+  - **4-Layer MLP Neural Network** (`63 → 512 → 256 → 128 → 26`): 99.99% test accuracy and 100.0% (26/26) centroid accuracy across all 26 letters.
+  - **Deterministic Geometric ASL Rule Engine**: Disambiguates difficult sign pairs (e.g., `G` vs `L`, `E` vs `S`, `U` vs `V`, `P` vs `H`, `X`, `R`, and `M`/`N`/`T` fist structures).
 - **Zero-GC & 60 FPS Performance**:
   - Pre-allocated typed arrays eliminate ~21,000 object allocations/second, preventing garbage collection stutter.
   - Batched 2D canvas drawing reduces skeleton and joint draw calls by 70%.
@@ -44,6 +47,7 @@ hasba/
 │       ├── labels.json   # 26 alphabet classes (A-Z)
 │       └── landmarks.json# Centroid reference coordinates
 ├── train/
+│   ├── train_full_kaggle.py # Kaggle dataset MediaPipe extraction & MLP training
 │   ├── extract_and_train.py # Dataset processing & MLP training script
 │   └── train_alphabets.py   # Landmark augmentation pipeline
 ├── serve.py              # Lightweight Python HTTP server
