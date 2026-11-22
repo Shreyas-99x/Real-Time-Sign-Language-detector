@@ -1,5 +1,5 @@
 /**
- * SignSpeak - Core Application Logic (v7 Bulletproof Anti-Repeat & High Accuracy)
+ * SignSpeak - Core Application Logic (v8 Faster Timing & Better Smoothing)
  * ==============================================================================
  * Real-time sign language recognition, sentence building, predictive autocomplete,
  * live FPS monitoring, ghost hand alignment guide, top-3 predictions,
@@ -11,10 +11,10 @@
 
   // --- Configuration & Constants ---
   const CONFIG = {
-    CONFIDENCE_THRESHOLD: 0.60, // Minimum confidence to accept a prediction
-    HOLD_DURATION_MS: 580,      // Comfortable, deliberate dwell time (0.58s)
-    COOLDOWN_MS: 420,           // Clean cooldown recovery after commit (0.42s)
-    SMOOTHING_BUFFER_SIZE: 4,   // Frame history for majority vote smoothing (~65ms)
+    CONFIDENCE_THRESHOLD: 0.58, // Slightly relaxed: catches confident-but-not-peak signs
+    HOLD_DURATION_MS: 500,      // Faster dwell: responsive without accidental triggers (0.5s)
+    COOLDOWN_MS: 380,           // Snappier cooldown recovery (0.38s)
+    SMOOTHING_BUFFER_SIZE: 5,   // 5-frame majority vote for more stable consensus (~80ms)
     MODEL_DIR: 'model',
     MAX_HISTORY_ITEMS: 8
   };
@@ -628,7 +628,7 @@
     }
 
     // Candidate evaluation
-    if (smoothed.confidence >= CONFIG.CONFIDENCE_THRESHOLD && smoothed.voteFraction >= 0.6) {
+    if (smoothed.confidence >= CONFIG.CONFIDENCE_THRESHOLD && smoothed.voteFraction >= 0.55) {
       if (state.currentCandidate === smoothed.label) {
         const holdTime = now - state.candidateStartTime;
         const progress = Math.min(100, (holdTime / CONFIG.HOLD_DURATION_MS) * 100);
