@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SignSpeak — Real-Time Sign Language Communicator</title>
+  <meta name="description" content="Accessible web application that recognizes hand signs via webcam, builds sentences with predictive text, and speaks them aloud.">
+  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤟</text></svg>">
+</head>
+<body>
+  <!-- Header -->
+  <header class="app-header" role="banner">
+    <div class="header-container">
+      <div class="logo-group">
+        <span class="app-logo-icon" aria-hidden="true">🤟</span>
+        <div>
+          <h1 class="app-title">SignSpeak</h1>
+          <p class="app-tagline">Real-Time Sign Language to Speech</p>
+        </div>
+      </div>
+      <div class="header-controls">
+        <button id="asl-guide-btn" class="btn" type="button" aria-label="Open Sign Guide">
+          📖 Guide
+        </button>
+        <button id="help-btn" class="btn" type="button" aria-label="How to Use">
+          ❓ How to Use
+        </button>
+        <button id="sound-toggle-btn" class="btn" type="button" aria-label="Toggle Sound Effects">
+          🔊 Sound
+        </button>
+        <button id="theme-toggle-btn" class="btn" type="button" aria-label="Toggle Dark/Light Mode">
+          ☀️ Light
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Grid -->
+  <main class="main-layout" role="main">
+    
+    <!-- LEFT: Camera & Gesture Recognition -->
+    <section class="camera-section" aria-labelledby="camera-heading">
+      <div class="camera-card">
+        <div class="camera-card-header">
+          <h2 id="camera-heading" class="card-title">
+            📹 Live Sign Recognition
+          </h2>
+          <span id="camera-status" class="status-badge ready" role="status">Initializing...</span>
+        </div>
+
+        <!-- Video & Landmark Canvas Overlay -->
+        <div id="video-wrapper" class="video-container">
+          <video id="webcam-video" autoplay playsinline muted aria-label="Webcam video feed"></video>
+          <canvas id="output-canvas" aria-hidden="true"></canvas>
+
+          <!-- Ghost Hand Guide (shown when no hand detected) -->
+          <div id="ghost-hand-guide" class="ghost-hand-guide">
+            <span>✋</span>
+            <span>Place hand here</span>
+          </div>
+
+          <!-- Floating HUD Overlay on Video -->
+          <div class="video-hud-overlay">
+            <span id="fps-badge" class="fps-badge">0 FPS</span>
+            <div class="hud-right-group">
+              <span id="detection-status-badge" class="status-badge ready">Ready</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Camera Permission Error Alert -->
+        <div id="camera-error-alert" class="alert-card hidden" role="alert">
+          <p id="camera-error-msg">Camera access error.</p>
+          <button id="camera-retry-btn" class="btn btn-primary" type="button">Retry Camera</button>
+        </div>
+
+        <!-- Detection Dashboard Display -->
+        <div class="detection-hud" aria-live="polite">
+          <div class="detection-main">
+            <!-- Progress Ring & Detected Letter -->
+            <div class="progress-ring-container" aria-label="Detection progress">
+              <svg class="progress-ring" width="82" height="82">
+                <circle class="progress-ring-bg" stroke-width="6" fill="transparent" r="35" cx="41" cy="41"/>
+                <circle id="progress-ring-circle" class="progress-ring-circle" stroke-width="6" fill="transparent" r="35" cx="41" cy="41"/>
+              </svg>
+              <div id="detected-letter" class="letter-glyph" aria-label="Current Letter">—</div>
+            </div>
+
+            <!-- Metadata -->
+            <div class="detection-meta">
+              <span class="meta-label">Recognized Gesture</span>
+              <span id="detected-confidence" class="meta-confidence">Waiting for hand...</span>
+            </div>
+          </div>
+
+          <!-- Camera Toggle Button -->
+          <button id="toggle-camera-btn" class="btn" type="button">Stop Camera</button>
+        </div>
+
+        <!-- Top-3 Runner Up Predictions -->
+        <div id="top3-container" class="top3-container" aria-label="Top Predictions">
+          <span class="top3-label">Top 3:</span>
+          <div id="top3-items" class="top3-items">
+            <span class="suggestion-hint">Top predictions will appear here</span>
+          </div>
+        </div>
+
+        <!-- Cooldown Bar -->
+        <div id="cooldown-indicator" class="cooldown-wrap hidden" aria-hidden="true">
+          <div class="cooldown-progress-track">
+            <div id="cooldown-bar" class="cooldown-bar"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT: Sentence Builder & Speech Controls -->
+    <section class="builder-section" aria-labelledby="builder-heading">
+      <div class="builder-card">
+        <h2 id="builder-heading" class="card-title">
+          ✍️ Sentence Builder
+        </h2>
+
+        <!-- Recent Signed Letters Trail -->
+        <div class="history-trail-container" aria-label="Recent letters">
+          <span class="history-label">Recent:</span>
+          <div id="history-chips" class="history-chips"></div>
+        </div>
+
+        <!-- Predictive Autocomplete Chips -->
+        <div class="suggestions-panel" aria-label="Word Suggestions">
+          <span class="suggestions-header">Quick Word Suggestions</span>
+          <div id="word-suggestions" class="suggestions-scroll" role="group" aria-label="Suggested words">
+            <span class="suggestion-hint">Suggestions appear as you sign...</span>
+          </div>
+        </div>
+
+        <!-- Editable Sentence Box -->
+        <div class="sentence-container">
+          <label for="sentence-box" class="meta-label">Generated Text</label>
+          <textarea id="sentence-box" class="sentence-textarea" placeholder="Signed letters and words will appear here. You can also edit directly with keyboard..." aria-label="Sentence transcript"></textarea>
+        </div>
+
+        <!-- Text Action Buttons -->
+        <div class="builder-actions-grid" role="group" aria-label="Sentence editing actions">
+          <button id="btn-space" class="btn action-btn" type="button" aria-label="Insert Space">
+            ␣ Space
+          </button>
+          <button id="btn-backspace" class="btn action-btn" type="button" aria-label="Backspace">
+            ⌫ Back
+          </button>
+          <button id="btn-delete-word" class="btn action-btn" type="button" aria-label="Delete Last Word">
+            ⌫ Word
+          </button>
+          <button id="btn-copy" class="btn action-btn" type="button" aria-label="Copy to Clipboard">
+            📋 Copy
+          </button>
+          <button id="btn-clear" class="btn action-btn" type="button" aria-label="Clear Text">
+            🗑 Clear
+          </button>
+          <button id="btn-new-sentence" class="btn action-btn btn-primary" type="button" aria-label="New Sentence">
+            ↵ New
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Quick Emergency & Common Phrases -->
+      <div class="quick-phrases-card">
+        <h3 class="card-title">⚡ Quick Phrases (Tap to Insert)</h3>
+        <div class="quick-phrases-grid" role="group" aria-label="Quick phrases">
+          <button class="quick-phrase-chip" type="button" data-phrase="Hello!">👋 Hello!</button>
+          <button class="quick-phrase-chip" type="button" data-phrase="Thank you!">🙏 Thank You!</button>
+          <button class="quick-phrase-chip" type="button" data-phrase="Yes">👍 Yes</button>
+          <button class="quick-phrase-chip" type="button" data-phrase="No">👎 No</button>
+          <button class="quick-phrase-chip" type="button" data-phrase="Help me!">🚨 Help Me!</button>
+          <button class="quick-phrase-chip" type="button" data-phrase="Please call my family.">📞 Call Family</button>
+          <button class="quick-phrase-chip" type="button" data-phrase="I am deaf and using sign language.">🤟 I am Deaf</button>
+          <button class="quick-phrase-chip" type="button" data-phrase="How are you?">❓ How are you?</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Floating Toast Notifications -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <!-- How to Use Modal -->
+  <div id="help-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="help-title" class="modal-title">How to Use SignSpeak</h3>
+        <button id="close-help-btn" class="close-btn" type="button" aria-label="Close modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>SignSpeak empowers mute and speech-impaired individuals to communicate naturally by recognizing hand signs through the camera and converting them to text on screen.</p>
+        <ol>
+          <li><strong>Show your hand:</strong> Place your hand in front of the camera inside the guide box. The 21 cyan landmark points track your finger joints at full camera frame rate.</li>
+          <li><strong>Hold the sign:</strong> When your gesture is recognized, hold it steady for ~0.8 second. The green progress ring fills up and plays a confirmation chime when accepted.</li>
+          <li><strong>Avoid repeats:</strong> Once captured, the letter is locked so it won't repeat accidentally. Relax your hand or switch signs to continue.</li>
+          <li><strong>Word Suggestions:</strong> Tap any suggested word or phrase to autocomplete it and insert a space.</li>
+          <li><strong>Quick Phrases:</strong> Tap any common emergency phrase button at the bottom for instant insertion.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ASL Reference Guide Modal -->
+  <div id="asl-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="asl-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="asl-title" class="modal-title">Alphabet & Sign Reference Guide</h3>
+        <button id="close-asl-btn" class="close-btn" type="button" aria-label="Close modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>The model is trained strictly on the 26 ASL Alphabet letters (A to Z). Tap any letter to manually append it to your sentence:</p>
+        <div id="asl-grid" class="asl-grid" role="group" aria-label="ASL Sign Cards"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="app-footer" role="contentinfo">
+    <p>SignSpeak &copy; 2026 &bull; Accessible Real-Time AI Sign Language Communicator &bull; Powered by MediaPipe Hands</p>
+  </footer>
+
+  <!-- MediaPipe Hands & Camera Utils from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <!-- Application Logic -->
+  <script src="words.js?v=8"></script>
+  <script src="classifier.js?v=8"></script>
+  <script src="app.js?v=8"></script>
+</body>
+</html>
