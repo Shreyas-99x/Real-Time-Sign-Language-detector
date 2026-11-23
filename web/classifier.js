@@ -218,11 +218,15 @@ class SignClassifier {
   }
 
   /**
-   * Deterministic Geometric ASL Sign Evaluator:
-   * Inspects physical finger extensions, hand orientations, and knuckle interactions.
-   * Disambiguates difficult pairs (G vs L vs Q, P vs H vs V vs U, E vs S vs A).
+   * Deterministic Geometric ASL Disambiguation:
+   * Provides high-precision physical disambiguation for closely related sign clusters:
+   * 1. C vs O (Open cup vs tightly pinched circle)
+   * 2. K vs V vs P vs U vs H vs R (Index & Middle 2-finger variations)
+   * 3. Q vs G vs P vs L (Index & Thumb variations / Downward pointing)
+   * 4. Fist Cluster: A, E, S, T, M, N (Thumb tucked / drape positions)
+   * 5. Hooked Index X (Only when index PIP is high above fist and tip bent down)
    */
-  evaluateGeometry(landmarks) {
+  evaluateGeometry(landmarks, rawProbs) {
     const wrist = landmarks[0];
     const midMcp = landmarks[9];
 
@@ -256,155 +260,145 @@ class SignClassifier {
     const ringCurl = !ringExt;
     const pinkyCurl = !pinkyExt;
 
-    // Hooked index (X): PIP extended up, tip curled down
-    const idxPipUp = rot[6].y < rot[5].y - 0.20 * palmLen;
-    const idxTipDown = rot[8].y > rot[6].y + 0.04 * palmLen;
-    const idxHooked = idxPipUp && idxTipDown && midCurl && ringCurl && pinkyCurl;
+    // Relative distance of fingertips from palm base
+    const dBase = (tip) => d(0, tip) / palmLen;
+    const dThumbIdx = d(4, 8) / palmLen;
+    const dThumbMid = d(4, 12) / palmLen;
 
-    // Thumb states
-    const thumbOut = Math.abs(rot[4].x - rot[9].x) > 0.40 * palmLen;
-    const thumbUp = (rot[4].y < rot[2].y - 0.06 * palmLen) && (rot[4].x < rot[5].x + 0.12 * palmLen);
-    const thumbTouchIdx = d(4, 8) < 0.28 * palmLen;
-    const thumbTouchMid = d(4, 12) < 0.32 * palmLen;
+    // Hand orientation in camera frame: dy > 0 in pixel space means pointing DOWNWARDS
+    const isPointingDown = (rawAngleDeg > 35) && (rawAngleDeg < 145);
 
-    // Inter-finger distances
+    // Inter-finger distances & crossings
     const dIdxMid = d2(8, 12) / palmLen;
     const crossedIdxMid = ((rot[8].x - rot[12].x) * (rot[5].x - rot[9].x)) < 0;
 
-    // Hand orientation in camera frame
-    const isPointingDown = (rawAngleDeg > 35) && (rawAngleDeg < 145);
-    const isPointingSide = (Math.abs(rawAngleDeg) < 55) || (Math.abs(rawAngleDeg) > 125);
+    // Find top-1 from raw MLP probabilities if available
+    let top1Label = '';
+    if (rawProbs && this.labels.length > 0) {
+      let maxP = -1, maxI = 0;
+      for (let i = 0; i < rawProbs.length; i++) {
+        if (rawProbs[i] > maxP) { maxP = rawProbs[i]; maxI = i; }
+      }
+      top1Label = this.labels[maxI] || '';
+    }
 
-    // 1. Hooked Index -> 'X'
-    if (idxHooked) return { letter: 'X', confidence: 0.99 };
+    // 1. Hooked Index -> 'X' ONLY if index PIP is genuinely raised high above palm,
+    // only the tip is curled down, and other 3 fingers are folded deep in fist
+    const idxPipUp = (rot[6].y < rot[5].y - 0.15 * palmLen) && (dBase(6) > 0.65);
+    const idxTipDown = rot[8].y > rot[6].y + 0.04 * palmLen;
+    const otherFingersFolded = (dBase(10) < 0.65) && (dBase(14) < 0.60) && (dBase(18) < 0.55);
+    if (idxPipUp && idxTipDown && otherFingersFolded) {
+      return { letter: 'X', boost: 0.45 };
+    }
 
-    // 2. 4 Fingers Extended -> 'B'
-    if (idxExt && midExt && ringExt && pinkyExt) {
-      return { letter: 'B', confidence: 0.99 };
+    // 2. 4 Fingers Extended -> 'B' (straight flat palm)
+    if (idxExt && midExt && ringExt && pinkyExt && dBase(8) > 0.85 && dBase(12) > 0.85) {
+      return { letter: 'B', boost: 0.40 };
     }
 
     // 3. 3 Fingers Extended (Middle, Ring, Pinky) + Thumb touching Index -> 'F'
-    if (midExt && ringExt && pinkyExt && thumbTouchIdx) {
-      return { letter: 'F', confidence: 0.99 };
+    if (midExt && ringExt && pinkyExt && dThumbIdx < 0.28 && idxCurl) {
+      return { letter: 'F', boost: 0.45 };
     }
 
     // 4. 3 Fingers Extended (Index, Middle, Ring) -> 'W'
     if (idxExt && midExt && ringExt && pinkyCurl) {
-      return { letter: 'W', confidence: 0.99 };
+      return { letter: 'W', boost: 0.40 };
     }
 
-    // 5. 2 Fingers Extended (Index & Middle) -> P, H, K, R, V, or U
-    if (idxExt && midExt && ringCurl && pinkyCurl) {
-      if (isPointingDown) return { letter: 'P', confidence: 0.98 };
-      if (isPointingSide) return { letter: 'H', confidence: 0.98 };
+    // 5. CLUSTER C vs O
+    if (top1Label === 'C' || top1Label === 'O' || (idxCurl && midCurl && ringCurl && pinkyCurl && dBase(8) > 0.40)) {
+      // O: tight closed circle where thumb tip pinches index and middle fingertips
+      const isO = (dThumbIdx < 0.22) && (dThumbMid < 0.25);
+      // C: open rounded cup with distinct visible gap between thumb and fingertips
+      const isC = (dThumbIdx > 0.28) && (dBase(8) > 0.50);
+      if (isO) return { letter: 'O', boost: 0.45 };
+      if (isC) return { letter: 'C', boost: 0.45 };
+    }
 
+    // 6. CLUSTER K vs V vs P vs U vs H vs R (2 fingers extended: Index & Middle)
+    if (top1Label === 'K' || top1Label === 'V' || top1Label === 'P' || top1Label === 'U' || top1Label === 'H' || top1Label === 'R' || (idxExt && midExt && ringCurl && pinkyCurl)) {
+      if (isPointingDown) {
+        return { letter: 'P', boost: 0.45 };
+      }
+      if (crossedIdxMid) {
+        return { letter: 'R', boost: 0.45 };
+      }
       // K: thumb tip placed upwards between index and middle
-      const thumbBetweenIdxMid = (rot[4].y < rot[6].y + 0.05 * palmLen) &&
-        (d(4, 9) < 0.38 * palmLen || d(4, 5) < 0.38 * palmLen);
-      if (thumbBetweenIdxMid && rot[4].y < rot[2].y - 0.04 * palmLen) {
-        return { letter: 'K', confidence: 0.98 };
+      const thumbUpBetween = (rot[4].y < rot[2].y) &&
+                             (rot[4].y < rot[6].y + 0.05 * palmLen) &&
+                             (d(4, 9) < 0.40 * palmLen || d(4, 5) < 0.40 * palmLen);
+      if (thumbUpBetween) {
+        return { letter: 'K', boost: 0.40 };
       }
-
-      // R: index and middle physically crossed
-      if (crossedIdxMid) return { letter: 'R', confidence: 0.99 };
-
-      // V vs U: V is spread apart, U is touching together
-      if (dIdxMid > 0.28) return { letter: 'V', confidence: 0.99 };
-      return { letter: 'U', confidence: 0.98 };
+      if (dIdxMid > 0.28) {
+        return { letter: 'V', boost: 0.35 };
+      }
+      return { letter: 'U', boost: 0.35 };
     }
 
-    // 6. 2 Fingers Extended (Thumb & Pinky) -> 'Y'
+    // 7. CLUSTER Q vs G vs P vs L (Index extended or Index + Thumb)
+    if (top1Label === 'Q' || top1Label === 'G' || top1Label === 'L' || (idxExt && midCurl && ringCurl && pinkyCurl)) {
+      if (isPointingDown) {
+        return { letter: 'Q', boost: 0.45 };
+      }
+      const thumbOut = Math.abs(rot[4].x - rot[9].x) > 0.40 * palmLen;
+      if (thumbOut && rot[4].y < rot[2].y - 0.05 * palmLen && rot[8].y < rot[6].y - 0.15 * palmLen) {
+        return { letter: 'L', boost: 0.40 };
+      }
+      if (thumbOut) {
+        return { letter: 'G', boost: 0.35 };
+      }
+    }
+
+    // 8. 2 Fingers Extended (Thumb & Pinky) -> 'Y'
+    const thumbOut = Math.abs(rot[4].x - rot[9].x) > 0.40 * palmLen;
     if (thumbOut && pinkyExt && idxCurl && midCurl && ringCurl) {
-      return { letter: 'Y', confidence: 0.99 };
+      return { letter: 'Y', boost: 0.45 };
     }
 
-    // 7. 2 Fingers Extended (Thumb & Index) -> L, G, or Q
-    if (thumbOut && idxExt && midCurl && ringCurl && pinkyCurl) {
-      if (isPointingDown) return { letter: 'Q', confidence: 0.98 };
-      if (isPointingSide) return { letter: 'G', confidence: 0.99 };
-      return { letter: 'L', confidence: 0.99 };
-    }
-
-    // 8. 1 Finger Extended (Pinky only) -> 'I'
+    // 9. 1 Finger Extended (Pinky only) -> 'I'
     if (pinkyExt && idxCurl && midCurl && ringCurl && !thumbOut) {
-      return { letter: 'I', confidence: 0.99 };
+      return { letter: 'I', boost: 0.45 };
     }
 
-    // 9. 1 Finger Extended (Index only) -> D, G, or Q
-    if (idxExt && midCurl && ringCurl && pinkyCurl) {
-      if (isPointingDown) return { letter: 'Q', confidence: 0.98 };
-      if (isPointingSide) return { letter: 'G', confidence: 0.98 };
-      if (thumbTouchMid) return { letter: 'D', confidence: 0.99 };
-      return { letter: 'D', confidence: 0.97 };
-    }
-
-    // 10. Closed Circle 'O' — all fingers touching thumb tip tightly
-    const dThumbIdx = d(4, 8) / palmLen;
-    const dThumbMid = d(4, 12) / palmLen;
-    if (thumbTouchIdx && thumbTouchMid && idxCurl && midCurl && ringCurl && pinkyCurl) {
-      // O: round gap between thumb and all finger tips — thumb NOT covering fingernails
-      if (dThumbIdx < 0.22 && dThumbMid < 0.28) {
-        return { letter: 'O', confidence: 0.98 };
-      }
-    }
-
-    // 11. Curved Open Cup 'C' — open rounded arc, thumb separated from fingers
-    if (!idxExt && dThumbIdx > 0.30 && dThumbIdx < 0.90 && rot[4].y < rot[0].y - 0.12 * palmLen) {
-      // C must NOT have all fingers deeply curled (that would be a fist)
-      const avgCurl = (d(0, 8) + d(0, 12) + d(0, 16)) / (3 * palmLen);
-      if (avgCurl > 0.55) { // fingers not deeply tucked — open cup shape
-        return { letter: 'C', confidence: 0.96 };
-      }
-    }
-
-    // 12. Fist variations (A, E, S, M, N, T)
-    if (idxCurl && midCurl && ringCurl && pinkyCurl) {
-      // A: thumb pointing upright along the side of index MCP (hand-invariant)
+    // 10. CLUSTER FIST FAMILY: A, E, S, T, M, N
+    if (idxCurl && midCurl && ringCurl && pinkyCurl && (dBase(8) < 0.65)) {
+      // A: thumb pointing upright along the side of index MCP (pointing up)
       const thumbUpright = (rot[4].y < rot[2].y - 0.05 * palmLen) &&
-        (d(4, 5) < 0.45 * palmLen) &&
-        (rot[4].y < rot[8].y - 0.04 * palmLen);
-      if (thumbUpright) return { letter: 'A', confidence: 0.98 };
+                           (d(4, 5) < 0.42 * palmLen) &&
+                           (rot[4].y < rot[8].y - 0.03 * palmLen);
+      if (thumbUpright) return { letter: 'A', boost: 0.40 };
 
-      // E: thumb tucked fully under curled fingertips forming a shelf
-      const thumbUnderFingertips = (rot[4].y >= rot[8].y - 0.05 * palmLen) &&
-        (d(4, 8) < 0.38 * palmLen || d(4, 12) < 0.38 * palmLen);
-      if (thumbUnderFingertips) {
-        return { letter: 'E', confidence: 0.98 };
-      }
+      // E: thumb tucked under curled fingertips forming a horizontal shelf
+      const thumbUnderFingertips = (rot[4].y >= rot[8].y - 0.04 * palmLen) &&
+                                  (d(4, 8) < 0.35 * palmLen || d(4, 12) < 0.35 * palmLen);
+      if (thumbUnderFingertips) return { letter: 'E', boost: 0.40 };
 
-      // S: thumb folded horizontally ACROSS the front of index/middle knuckles
+      // S: thumb folded horizontally ACROSS the front of index/middle fingers
       const thumbFoldedAcross = (rot[4].y < rot[8].y) &&
-        (d(4, 9) < 0.42 * palmLen || d(4, 5) < 0.40 * palmLen) &&
-        (rot[4].y > rot[5].y - 0.05 * palmLen);
-      if (thumbFoldedAcross) {
-        return { letter: 'S', confidence: 0.96 };
+                                (d(4, 9) < 0.38 * palmLen) &&
+                                (rot[4].y > rot[5].y - 0.06 * palmLen);
+      if (thumbFoldedAcross) return { letter: 'S', boost: 0.40 };
+
+      // T / N / M: sub-classify based on thumb tip position relative to knuckles
+      const thumbTipX = rot[4].x;
+      const idxKnuckleX = rot[5].x;
+      const midKnuckleX = rot[9].x;
+      const ringKnuckleX = rot[13].x;
+      const pinkyKnuckleX = rot[17].x;
+
+      if (d(4, 9) < 0.55 * palmLen || d(4, 5) < 0.55 * palmLen) {
+        if (Math.abs(thumbTipX - idxKnuckleX) < 0.25 * palmLen && d(4, 5) < 0.40 * palmLen) {
+          return { letter: 'T', boost: 0.35 };
+        }
+        if (d(4, 9) < 0.40 * palmLen && Math.abs(thumbTipX - midKnuckleX) < 0.25 * palmLen) {
+          return { letter: 'N', boost: 0.35 };
+        }
+        if (d(4, 13) < 0.45 * palmLen || d(4, 17) < 0.45 * palmLen) {
+          return { letter: 'M', boost: 0.35 };
+        }
       }
-
-      // --- M / N / T: fist sub-classification based on how many fingers sit over thumb ---
-      // All three share a fist with thumb tucked between/under fingers from the palm side.
-      // We use the y-position of finger MCPs vs thumb tip to count which fingers drape over.
-      const thumbTipY = rot[4].y;
-      const idxMcpY  = rot[5].y;   // index MCP
-      const midMcpY  = rot[9].y;   // middle MCP
-      const ringMcpY = rot[13].y;  // ring MCP
-      const thumbNearPalm = d(4, 9) < 0.55 * palmLen || d(4, 5) < 0.55 * palmLen;
-
-      if (thumbNearPalm) {
-        // Count fingers whose MCP is ABOVE (smaller y) thumb tip — these drape over it
-        const idxOver  = idxMcpY  < thumbTipY + 0.08 * palmLen;
-        const midOver  = midMcpY  < thumbTipY + 0.08 * palmLen;
-        const ringOver = ringMcpY < thumbTipY + 0.08 * palmLen;
-        const fingersOver = (idxOver ? 1 : 0) + (midOver ? 1 : 0) + (ringOver ? 1 : 0);
-
-        // T: thumb tip sandwiched under just the index (1 finger over)
-        if (fingersOver === 1 && idxOver) return { letter: 'T', confidence: 0.88 };
-        // N: index + middle drape over thumb (2 fingers over)
-        if (fingersOver === 2 && idxOver && midOver) return { letter: 'N', confidence: 0.88 };
-        // M: index + middle + ring all drape over thumb (3 fingers over)
-        if (fingersOver >= 3) return { letter: 'M', confidence: 0.88 };
-      }
-
-      return null; // Truly ambiguous fist — let MLP handle it
     }
 
     return null;
@@ -421,10 +415,7 @@ class SignClassifier {
     // 1. Normalization
     const normVector = this.normalizeLandmarks(landmarks);
 
-    // 2. Deterministic Geometric ASL Evaluation
-    const geomMatch = this.evaluateGeometry(landmarks);
-
-    // 3. MLP Evaluation
+    // 2. MLP Evaluation
     let mlpProbs = null;
     if (this.model) {
       mlpProbs = this.predictMLP(normVector);
@@ -451,16 +442,12 @@ class SignClassifier {
       }
     }
 
-    // If geometric rule fired with certainty, assign dominant probability and suppress conflicting classes
+    // 3. Deterministic Geometric ASL Disambiguation (Soft Additive Boost)
+    const geomMatch = this.evaluateGeometry(landmarks, finalProbs);
     if (geomMatch) {
       const matchIdx = this.labels.indexOf(geomMatch.letter);
       if (matchIdx !== -1) {
-        const conf = geomMatch.confidence;
-        // Suppress competing classes to eliminate probability splits and alternating flip-flops
-        for (let j = 0; j < numClasses; j++) {
-          finalProbs[j] *= (1.0 - conf);
-        }
-        finalProbs[matchIdx] = conf;
+        finalProbs[matchIdx] += (geomMatch.boost || 0.40);
       }
     }
 
